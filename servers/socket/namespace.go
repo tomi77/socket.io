@@ -295,6 +295,12 @@ func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 			}
 
 			n._doConnect(socket, fn)
+			// Guard: c.onclose() may have run while _doConnect was in-flight,
+			// after the ReadyState check above — the socket landed in c.sockets
+			// after the Range snapshot so _onclose will never fire automatically.
+			if client.conn.ReadyState() != "open" && socket.Connected() {
+				socket._onclose("transport close")
+			}
 		})
 	})
 }
