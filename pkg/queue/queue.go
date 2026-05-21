@@ -83,6 +83,12 @@ func (q *Queue) Size() int {
 // loop is the main consumer goroutine.
 func (q *Queue) loop() {
 	defer func() {
+		// Nil the tasks slice so the backing array is eligible for GC immediately,
+		// even if the Queue object itself is still referenced by its owner
+		// (transport writeQueue or socket taskQueue) for a while after shutdown.
+		q.mu.Lock()
+		q.tasks = nil
+		q.mu.Unlock()
 		close(q.done)
 		queueActiveGoroutines.Add(-1)
 	}()
@@ -103,6 +109,13 @@ func (q *Queue) get() (func(), bool) {
 	defer q.mu.Unlock()
 
 	for len(q.tasks) == 0 && !q.shuttingDown {
+		// Release an oversized backing array while the queue is idle.
+		// After a traffic burst the slice can grow well beyond its initial
+		// 1024-slot capacity; shrinking here lets the runtime reclaim that
+		// memory rather than holding it for the entire lifetime of the queue.
+		if cap(q.tasks) > 1024 {
+			q.tasks = make([]func(), 0, 1024)
+		}
 		q.cond.Wait()
 	}
 
